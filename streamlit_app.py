@@ -1,8 +1,10 @@
-import streamlit as st
 import math
 import itertools
-import pandas as pd
-import plotly.express as px
+import streamlit as st
+import matplotlib.pyplot as plt
+
+# 日本語フォント対応
+plt.rcParams['font.family'] = ['MS Gothic', 'Meiryo', 'sans-serif']
 
 # ページ設定
 st.set_page_config(
@@ -13,125 +15,91 @@ st.set_page_config(
 
 st.title("📐 パスカルの多次元単体 (Simplex) ビジュアライザー")
 st.markdown("""
-パスカルの三角形の項数を高次元に拡張した **$s[m]n$**（項数 $m$、冪乗 $n$）の数表と、
-3次元空間へスライス・投影したインタラクティブな3Dモデル（**拡大縮小・回転可能**）を同時に生成します。
+パスカルの三角形の項数を高次元に拡張した **$s[m]n$** の構造を、3次元空間へスライス・投影してインタラクティブに可視化します。
 """)
 
-# --- 入力コントロール（ドロップダウン） ---
-st.sidebar.header("🎛️ パラメータ設定")
-m_options = [2, 3, 4, 5, 6, 7]
-n_options = [1, 2, 3, 4, 5, 6]
+# --- サイドバーの設定 ---
+st.sidebar.header("⚙️ パラメータ設定")
+m_val = st.sidebar.slider("項数 m (次元数)", min_value=2, max_value=6, value=3)
+n_val = st.sidebar.slider("冪乗 n (段数 = n + 1)", min_value=1, max_value=6, value=3)
 
-m_val = st.sidebar.selectbox("項数 m (次元数)", options=m_options, index=2)
-n_val = st.sidebar.selectbox("冪乗 n (次数 / 段数 = n + 1)", options=n_options, index=2)
-
-st.sidebar.markdown(f"**現在の設定:** s[{m_val}]{n_val} （段数: {n_val + 1}）")
-
-
-# --- 数表生成関数 ---
-def get_s_table(n_val, m_val):
-    def get_coeffs(term_m, power_n):
-        if term_m == 1:
-            return [1]
-        if term_m == 2:
-            return [math.comb(power_n, k) for k in range(power_n + 1)]
-        slices = []
-        for k in range(power_n + 1):
-            sub = get_coeffs(term_m - 1, power_n - k)
-            scaled = multiply(sub, math.comb(power_n, k))
-            slices.append(scaled)
-        return slices
-
-    def multiply(struct, factor):
-        if isinstance(struct, list):
-            return [multiply(item, factor) for item in struct]
-        return struct * factor
-
-    def format_struct(struct, term_m):
-        if term_m == 2:
-            return " ".join(map(str, struct))
-        blank_lines = term_m - 2
-        separator = "\n" * (blank_lines + 1)
-        sub_strs = [format_struct(sub, term_m - 1) for sub in struct]
-        return separator.join(sub_strs)
-
-    coeffs = get_coeffs(m_val, n_val)
-    return format_struct(coeffs, m_val)
-
-
-# --- 座標空間生成関数 ---
-def generate_coordinate_space(m_val, n_val):
+# データ生成関数
+@st.cache_data
+def generate_coordinate_space(m, n):
     coords = []
-    for partition in itertools.product(range(n_val + 1), repeat=m_val):
-        if sum(partition) == n_val:
-            num = math.factorial(n_val)
+    for partition in itertools.product(range(n + 1), repeat=m):
+        if sum(partition) == n:
+            num = math.factorial(n)
             den = math.prod(math.factorial(k) for k in partition)
             alpha = num // den
             coords.append((*partition, alpha))
     return coords
 
+coords = generate_coordinate_space(m_val, n_val)
+level_val = n_val + 1
 
-# --- レイアウト：数表と3Dモデルを並べる ---
-tab1, tab2 = st.tabs(["📊 数表データ (2Dテキスト)", "🌐 インタラクティブ3Dモデル"])
+st.subheader(f"📊 s[{m_val}]{n_val} の可視化 (段数: {level_val})")
 
-with tab1:
-    st.subheader(f"s[{m_val}]{n_val} の数表（段数: {n_val + 1}）")
-    raw_text = get_s_table(n_val, m_val)
-    st.text(raw_text)
-
-with tab2:
-    st.subheader(f"s[{m_val}]{n_val} の3D空間投影")
-    st.info("💡 **操作方法**: グラフの上でスワイプすると**回転**、ピンチイン/アウトで**拡大縮小**ができます。")
+# --- 可視化処理 ---
+if m_val <= 4:
+    fig = plt.figure(figsize=(10, 7))
+    ax = fig.add_subplot(111, projection='3d')
     
-    coords = generate_coordinate_space(m_val, n_val)
+    xs = [c[0] for c in coords]
+    ys = [c[1] for c in coords]
+    zs = [c[2] if m_val >= 3 else 0 for c in coords]
+    alphas = [c[-1] for c in coords]
     
-    if m_val <= 4:
-        df = pd.DataFrame(coords, columns=[f"x{i+1}" for i in range(m_val)] + ["alpha"])
-        while len(df.columns) < 4:
-            df[f"x{len(df.columns)}"] = 0
+    scatter = ax.scatter(xs, ys, zs, c=alphas, s=[a * 20 for a in alphas], cmap='viridis', depthshade=True)
+    ax.set_title(f"s[{m_val}]{n_val} (段数: {level_val})", fontsize=12)
+    ax.set_xlabel("X (x1)")
+    ax.set_ylabel("Y (x2)")
+    ax.set_zlabel("Z (x3)")
+    fig.colorbar(scatter, ax=ax, shrink=0.5, aspect=5, label="alpha")
+    
+    st.pyplot(fig)
+else:
+    # m >= 5 の場合の階層スライス
+    extra_dims = list(range(3, m_val))
+    nested_keys = sorted(list(set(tuple(c[d] for d in extra_dims) for c in coords)))
+    
+    num_plots = len(nested_keys)
+    cols = min(2, num_plots)
+    rows = math.ceil(num_plots / cols)
+    
+    fig = plt.figure(figsize=(6 * cols, 5 * rows))
+    
+    for i, key in enumerate(nested_keys):
+        slice_data = [c for c in coords if tuple(c[d] for d in extra_dims) == key]
+        
+        xs = [c[0] for c in slice_data]
+        ys = [c[1] for c in slice_data]
+        zs = [c[2] for c in slice_data]
+        alphas = [c[-1] for c in slice_data]
+        
+        ax = fig.add_subplot(rows, cols, i + 1, projection='3d')
+        
+        if xs and ys and zs:
+            scatter = ax.scatter(xs, ys, zs, c=alphas, s=[a * 20 for a in alphas], cmap='viridis', depthshade=True)
+            fig.colorbar(scatter, ax=ax, shrink=0.5, aspect=5, label="alpha")
             
-        fig = px.scatter_3d(
-            df, x='x1', y='x2', z='x3',
-            color='alpha',
-            size='alpha',
-            size_max=18,
-            opacity=0.85,
-            color_continuousScale='Viridis',
-            title=f"s[{m_val}]{n_val} (3D統合表示 / 段数: {n_val + 1})"
-        )
-        fig.update_layout(scene=dict(
-            xaxis_title='x1', yaxis_title='x2', zaxis_title='x3',
-            xaxis=dict(range=[0, n_val]),
-            yaxis=dict(range=[0, n_val]),
-            zaxis=dict(range=[0, n_val])
-        ))
-        st.plotly_chart(fig, use_container_width=True)
+        layer_name = f"{m_val}次層数"
+        layer_desc = ", ".join([f"x{d+1}={val}" for d, val in zip(extra_dims, key)])
+        title_str = f"s[{m_val}]{n_val} (段数: {level_val})\n[{layer_name}: {layer_desc}]"
+            
+        ax.set_title(title_str, fontsize=10)
+        ax.set_xlabel("X (x1)")
+        ax.set_ylabel("Y (x2)")
+        ax.set_zlabel("Z (x3)")
+        ax.set_xlim(0, n_val)
+        ax.set_ylim(0, n_val)
+        ax.set_zlim(0, n_val)
         
-    else:
-        extra_dims = list(range(3, m_val))
-        nested_keys = sorted(list(set(tuple(c[d] for d in extra_dims) for c in coords)))
-        
-        key_options = [str(k) for k in nested_keys]
-        selected_key_str = st.selectbox("📂 階層（スライス層）の選択", options=key_options)
-        
-        selected_key = nested_keys[key_options.index(selected_key_str)]
-        slice_data = [c for c in coords if tuple(c[d] for d in extra_dims) == selected_key]
-        
-        df = pd.DataFrame(slice_data, columns=[f"x{i+1}" for i in range(m_val)] + ["alpha"])
-        
-        fig = px.scatter_3d(
-            df, x='x1', y='x2', z='x3',
-            color='alpha',
-            size='alpha',
-            size_max=18,
-            opacity=0.85,
-            color_continuousScale='Viridis',
-            title=f"s[{m_val}]{n_val} [階層: {selected_key_str} / 段数: {n_val + 1}]"
-        )
-        fig.update_layout(scene=dict(
-            xaxis_title='x1', yaxis_title='x2', zaxis_title='x3',
-            xaxis=dict(range=[0, n_val]),
-            yaxis=dict(range=[0, n_val]),
-            zaxis=dict(range=[0, n_val])
-        ))
-        st.plotly_chart(fig, use_container_width=True)
+    plt.tight_layout()
+    st.pyplot(fig)
+
+# 座標データのテキスト表示
+with st.expander("📋 座標データ (Raw Data) を確認する"):
+    st.write(f"合計点数: {len(coords)} 点")
+    for c in coords:
+        st.text(str(c))
